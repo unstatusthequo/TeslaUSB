@@ -112,28 +112,42 @@ install_pkg_safe() {
 }
 
 enable_install_swap() {
-  INSTALL_SWAP="/var/swap/teslausb_pkg.swap"
-  if swapon --show | grep -q "$INSTALL_SWAP" 2>/dev/null; then
-    echo "Temporary swap already active"
-    return
+  # SWAP SETUP FIX
+  SWAP_DIR="/var/swap"
+  TEMP_SWAP_FILE="$SWAP_DIR/teslausb_pkg.swap"
+  SWAP_BACKUP=""
+
+  # Cleanup function to restore state on exit/error
+  cleanup_swap() {
+    echo "Cleaning up temporary swap..."
+    if swapon --show | grep -q "$TEMP_SWAP_FILE"; then
+      swapoff "$TEMP_SWAP_FILE"
+    fi
+    if [ -f "$TEMP_SWAP_FILE" ]; then
+      rm -f "$TEMP_SWAP_FILE"
+    fi
+    # Restore original system swap file if we moved it
+    if [ -n "$SWAP_BACKUP" ] && [ -f "$SWAP_BACKUP" ]; then
+      echo "Restoring original system swap file..."
+      mv "$SWAP_BACKUP" "$SWAP_DIR"
+    fi
+  }
+  trap cleanup_swap EXIT
+
+  echo "Setting up temporary swap for package installation..."
+  if [ -f "$SWAP_DIR" ] && [ ! -d "$SWAP_DIR" ]; then
+    echo "Notice: $SWAP_DIR exists as a file. Backing it up to allow directory creation."
+    SWAP_BACKUP="${SWAP_DIR}.bak"
+    mv "$SWAP_DIR" "$SWAP_BACKUP"
   fi
-  echo "Enabling temporary swap for package installs (1GB)..."
-  # Use existing swap if available, otherwise create temporary
-  if [ -f "/var/swap/fsck.swap" ] && ! swapon --show | grep -q "fsck.swap" 2>/dev/null; then
-    echo "  Using existing fsck swap file"
-    swapon /var/swap/fsck.swap 2>/dev/null && return
-  fi
-  # Create temporary 1GB swap
-  mkdir -p /var/swap
-  if fallocate -l 1G "$INSTALL_SWAP" 2>/dev/null || dd if=/dev/zero of="$INSTALL_SWAP" bs=1M count=1024 status=none; then
-    chmod 600 "$INSTALL_SWAP"
-    mkswap "$INSTALL_SWAP" >/dev/null 2>&1 || { echo "mkswap failed"; return 1; }
-    swapon "$INSTALL_SWAP" 2>/dev/null || { echo "swapon failed"; return 1; }
-    echo "  Swap enabled: $(swapon --show | grep -E 'teslausb|fsck' || echo 'NONE - FAILED')"
-  else
-    echo "ERROR: could not create temporary swap"
-    return 1
-  fi
+
+  mkdir -p "$SWAP_DIR"
+  dd if=/dev/zero of="$TEMP_SWAP_FILE" bs=1M count=1024 status=progress
+  mkswap "$TEMP_SWAP_FILE"
+  swapon "$TEMP_SWAP_FILE"
+
+  # Set INSTALL_SWAP for compatibility with disable_install_swap()
+  INSTALL_SWAP="$TEMP_SWAP_FILE"
 }
 
 disable_install_swap() {
